@@ -58,7 +58,7 @@ jack_process_cb(
   jack_nframes_t offset;
 
   input_buf = jack_port_get_buffer(fluidjack_ptr->in, nframes);
-  input_event_count = jack_midi_get_event_count(input_buf, nframes);
+  input_event_count = jack_midi_get_event_count(input_buf);
 
   left = (float *)jack_port_get_buffer(fluidjack_ptr->left, nframes);
   right = (float *)jack_port_get_buffer(fluidjack_ptr->right, nframes);
@@ -67,7 +67,7 @@ jack_process_cb(
   for (i = 0; i < input_event_count; i++)
   {
     /* retrieve JACK MIDI event */
-    jack_midi_event_get(&input_event, input_buf, i, nframes);
+    jack_midi_event_get(&input_event, input_buf, i);
 
     assert(input_event.time >= offset);
     if (input_event.time > offset)
