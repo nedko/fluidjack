@@ -22,10 +22,15 @@
 
 /* gcc `pkg-config --cflags --libs fluidsynth jack` main.c -o fluidjack */
 
+#define _GNU_SOURCE
+#include <string.h>
+#include <stdbool.h>
+
 #include <fluidsynth.h>
 #include <jack/jack.h>
 #include <jack/midiport.h>
 #include <assert.h>
+#include <signal.h>
 
 #define LOG_ERROR(format, arg...) fprintf(stderr, format "\n", ## arg)
 #define LOG_NOTICE(format, arg...) printf(format "\n", ## arg)
@@ -117,6 +122,68 @@ jack_process_cb(
 }
 
 #undef fluidjack_ptr
+
+int unblock = 0;    // (write-end of the pipe)
+int block_check = 0;  // (read-end of the pipe)
+
+bool wait_input(void)
+{
+  fd_set read_set;
+  int unblock_pipe[2];
+
+  if (!unblock)
+  {
+    // no block/unblock pipe yet....
+    if (pipe(unblock_pipe))
+    {
+      return false;
+    }
+    unblock = unblock_pipe[1];    // unblock key
+    block_check = unblock_pipe[0];  // block check
+  }
+
+  // find out if (input_is_ready_on_stdin || unblock_key_has_been_activated)
+  FD_ZERO(&read_set);
+  FD_SET(0,&read_set);
+  FD_SET(block_check,&read_set);  // if there's anything to read on the pipe unblock_key has been activated!
+
+  // wait until input is ready or a cancel wait was issued
+  if (select(block_check+1,&read_set,NULL,NULL,NULL) == -1)
+  {
+    return false;
+  }
+
+  if (FD_ISSET(0,&read_set))
+  {
+    return true;      // input ready on stdin
+  }
+  else
+  {
+    if (block_check)    // user issued cancel wait!
+    {
+      close(block_check);
+    }
+    block_check = 0;
+    return false;
+  }
+
+}
+
+void wait_input_cancel(void)
+{
+  if (unblock)
+  {
+    write(unblock,'\0',1);  // stub!
+    close(unblock);
+    unblock = 0;
+  }
+}
+
+void signal_handler(int signum)
+{
+  LOG_NOTICE("Caught signal %d (%s), terminating", signum, strsignal(signum));
+  wait_input_cancel();
+}
 
 int main(int argc, char ** argv)
 {
@@ -210,7 +277,11 @@ int main(int argc, char ** argv)
   }
 
   LOG_NOTICE("Press Enter key to exit");
-  getchar();
+
+  signal(SIGTERM, signal_handler);
+  signal(SIGINT, signal_handler);
+
+  wait_input();
 
   jack_deactivate(fluidjack.jack_client);
 
@@ -221,6 +292,7 @@ exit_delete_settings:
   delete_fluid_settings(fluidjack.settings);
 
 exit_close_jack_client:
+  LOG_NOTICE("closing jack client");
   jack_client_close(fluidjack.jack_client);
 
 exit:
