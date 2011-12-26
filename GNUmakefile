@@ -1,2 +1,2 @@
 default:
-	gcc `pkg-config --cflags --libs fluidsynth jack` fluidjack.c -o fluidjack
+	gcc `pkg-config --cflags --libs fluidsynth jack` -Wall -Wextra fluidjack.c -o fluidjack
