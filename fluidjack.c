@@ -31,6 +31,7 @@
 #include <jack/midiport.h>
 #include <assert.h>
 #include <signal.h>
+#include <unistd.h>
 
 #define LOG_ERROR(format, arg...) fprintf(stderr, format "\n", ## arg)
 #define LOG_NOTICE(format, arg...) printf(format "\n", ## arg)
@@ -53,7 +54,6 @@ jack_process_cb(
   jack_nframes_t nframes,
   void * context_ptr)
 {
-  int ret;
   float * left;
   float * right;
   void * input_buf;
@@ -227,7 +227,7 @@ int main(int argc, char ** argv)
     goto exit_delete_settings;
   }
 
-  LOG_NOTICE("Loading soundfont...", argv[1]);
+  LOG_NOTICE("Loading soundfont \"%s\"...", argv[1]);
   fluidjack.sf_id = fluid_synth_sfload(fluidjack.synth, argv[1], 1);
   if (fluidjack.sf_id == -1)
   {
