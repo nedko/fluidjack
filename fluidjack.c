@@ -3,7 +3,7 @@
  *
  *   fluidjack - sf2 synth (fluid) with JACK MIDI input and JACK audio outputs
  *
- *   Copyright (C) 2007 Nedko Arnaudov <nedko@arnaudov.name>
+ *   Copyright (C) 2007,2011 Nedko Arnaudov <nedko@arnaudov.name>
  *
  *   This program is free software; you can redistribute it and/or modify
  *   it under the terms of the GNU General Public License as published by
@@ -32,6 +32,16 @@
 #include <assert.h>
 #include <signal.h>
 #include <unistd.h>
+
+#if !defined(DEFAULT_SEARCH_PATH)
+#define DEFAULT_SEARCH_PATH \
+  "/usr/share/sounds/sf2"   \
+  ":"                       \
+  "/usr/share/sfbank"       \
+  ":"                       \
+  "/usr/local/lib/sfbank"   \
+  ""
+#endif
 
 #define LOG_ERROR(format, arg...) fprintf(stderr, format "\n", ## arg)
 #define LOG_NOTICE(format, arg...) printf(format "\n", ## arg)
@@ -185,15 +195,106 @@ void signal_handler(int signum)
   wait_input_cancel();
 }
 
+static bool check_soundfont_path_suffix(char * path_buffer)
+{
+  size_t len;
+
+  if (access(path_buffer, R_OK) == 0) return true;
+
+  len = strlen(path_buffer);
+
+  strcpy(path_buffer + len, ".sf2");
+  if (access(path_buffer, R_OK) == 0) return true;
+
+  strcpy(path_buffer + len, ".SF2");
+  if (access(path_buffer, R_OK) == 0) return true;
+
+  return false;
+}
+
+static bool search_soundfont_path(char * path_buffer, const char * search_path, const char * filename)
+{
+  char * search_path_buffer;
+  char * path;
+  size_t len;
+
+  search_path_buffer = strdup(search_path);
+  if (search_path_buffer == NULL)
+  {
+    LOG_ERROR("cannot allocate memory for search path buffer.");
+    return false;
+  }
+
+  for (path = strtok(search_path_buffer, ":"); path != NULL; path = strtok(NULL, ":"))
+  {
+    len = strlen(path);
+    assert(len > 0);
+    memcpy(path_buffer, path, len);
+    if (path[len - 1] != '/')
+    {
+      path_buffer[len++] = '/';
+    }
+
+    strcpy(path_buffer + len, filename);
+    if (check_soundfont_path_suffix(path_buffer))
+    {
+      free(search_path_buffer);
+      return true;
+    }
+  }
+
+  free(search_path_buffer);
+  return false;
+}
+
+static char * lookup_soundfont(const char * soundfont)
+{
+  const char * search_path;
+  char * path_buffer;
+
+  search_path = getenv("SFBANKDIR");
+  if (search_path == NULL)
+  {
+    search_path = DEFAULT_SEARCH_PATH;
+  }
+
+  path_buffer = malloc(strlen(search_path) + strlen(soundfont) + 1 + 4 + 1); /* / + .sf2 + 0 */
+  if (path_buffer == NULL)
+  {
+    LOG_ERROR("cannot allocate memory for full path buffer.");
+    return NULL;
+  }
+
+  strcpy(path_buffer, soundfont);
+
+  if (check_soundfont_path_suffix(path_buffer) ||
+      search_soundfont_path(path_buffer, search_path, soundfont))
+  {
+    return path_buffer;
+  }
+
+  LOG_NOTICE("Soundfont \"%s\" not found. Search path was \"%s\"", soundfont, search_path);
+  free(path_buffer);
+  return NULL;
+}
+
 int main(int argc, char ** argv)
 {
   int ret;
   struct fluidjack fluidjack;
   jack_nframes_t sample_rate;
+  char * soundfont;
 
   if (argc != 2)
   {
     LOG_ERROR("Usage: fluidjack <path_to_sf2_file>");
+    ret = 1;
+    goto exit;
+  }
+
+  soundfont = lookup_soundfont(argv[1]);
+  if (soundfont == NULL)
+  {
     ret = 1;
     goto exit;
   }
@@ -204,7 +305,7 @@ int main(int argc, char ** argv)
   {
     LOG_ERROR("Failed to connect to JACK.");
     ret = 1;
-    goto exit;
+    goto free;
   }
 
   fluidjack.settings = new_fluid_settings();
@@ -227,8 +328,8 @@ int main(int argc, char ** argv)
     goto exit_delete_settings;
   }
 
-  LOG_NOTICE("Loading soundfont \"%s\"...", argv[1]);
-  fluidjack.sf_id = fluid_synth_sfload(fluidjack.synth, argv[1], 1);
+  LOG_NOTICE("Loading soundfont \"%s\"...", soundfont);
+  fluidjack.sf_id = fluid_synth_sfload(fluidjack.synth, soundfont, 1);
   if (fluidjack.sf_id == -1)
   {
     LOG_ERROR("Soundfont loading failed.");
@@ -294,6 +395,9 @@ exit_delete_settings:
 exit_close_jack_client:
   LOG_NOTICE("closing jack client");
   jack_client_close(fluidjack.jack_client);
+
+free:
+  free(soundfont);
 
 exit:
   return ret;
